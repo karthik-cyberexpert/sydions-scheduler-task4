@@ -660,8 +660,10 @@ function App() {
       console.log('Gemini API failed, falling back to Nvidia NIM...', geminiErr);
       try {
         // 2. Try Nvidia fallback (wrapped in CORS proxy)
+        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        const nvBaseUrl = isLocal ? 'https://integrate.api.nvidia.com' : '/api/nvidia';
         const nvRes = await fetch(
-          'https://integrate.api.nvidia.com/v1/chat/completions',
+          `${nvBaseUrl}/v1/chat/completions`,
           {
             method: 'POST',
             headers: {
@@ -699,7 +701,7 @@ function App() {
               'X-Title': 'Chat App'
             },
             body: JSON.stringify({
-              model: 'meta-llama/llama-3.3-70b-instruct:free',
+              model: 'meta-llama/llama-3.2-3b-instruct:free',
               max_tokens: 150,
               messages: [{
                 role: 'user',
