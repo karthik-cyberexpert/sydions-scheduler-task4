@@ -1412,4 +1412,94 @@ body {
   margin-top: 8px;
 }
 
+/* Right-click context menu on messages */
+.msg-context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 180px;
+  background: var(--wa-sidebar-bg);
+  border: 1px solid var(--wa-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  padding: 6px;
+  animation: ctx-pop 0.18s cubic-bezier(0.1, 0.9, 0.2, 1);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
 
+@keyframes ctx-pop {
+  from { opacity: 0; transform: scale(0.92) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  color: var(--wa-text-primary);
+  font-size: 13.5px;
+  font-family: var(--sans);
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.context-menu-item:hover {
+  background: var(--wa-hover-chat-bg);
+  transform: translateX(2px);
+}
+
+.context-menu-item:active {
+  transform: scale(0.97);
+}
+
+/* AI typing indicator floating label */
+.ai-typing-indicator {
+  position: absolute;
+  top: -28px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--wa-green);
+  font-weight: 500;
+  background: linear-gradient(135deg, rgba(0, 168, 132, 0.12), rgba(37, 211, 102, 0.08));
+  padding: 4px 12px;
+  border-radius: 12px 12px 0 0;
+  backdrop-filter: blur(6px);
+  animation: ai-label-fade 0.3s ease;
+}
+
+@keyframes ai-label-fade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ai-sparkle-spin {
+  color: #f1c40f;
+  animation: sparkle-spin 1.2s linear infinite;
+}
+
+@keyframes sparkle-spin {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(1.2); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+/* Glowing border on input when AI is typing */
+.chat-text-input.ai-typing-active {
+  border-color: var(--wa-green) !important;
+  box-shadow: 0 0 0 2px rgba(0, 168, 132, 0.2), 0 0 12px rgba(0, 168, 132, 0.1);
+  color: var(--wa-green);
+  animation: ai-glow-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ai-glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(0, 168, 132, 0.15), 0 0 8px rgba(0, 168, 132, 0.08); }
+  50% { box-shadow: 0 0 0 3px rgba(0, 168, 132, 0.25), 0 0 16px rgba(0, 168, 132, 0.15); }
+}

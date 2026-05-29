@@ -27,6 +27,8 @@ import {
   FolderOpen,
   ArrowLeft,
   Bot,
+  Sparkles,
+  Loader2,
   Eye,
   EyeOff
 } from 'lucide-react'
@@ -94,6 +96,11 @@ function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const recordingTimerRef = useRef(null);
+
+  // Right-click context menu state
+  const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, message: null });
+  const [isAiReplying, setIsAiReplying] = useState(false);
+  const aiTypingIntervalRef = useRef(null);
 
   // New chat modal states
   const [newChatName, setNewChatName] = useState('');
@@ -313,9 +320,9 @@ function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chats, activeChatId, typingChatId]);
 
-  // Fetch initial chats and messages from Supabase
+  // Fetch initial chats and messages from Supabase (filtered by current user)
   useEffect(() => {
-    if (!isLoggedIn) return;
+    if (!isLoggedIn || !userName) return;
 
     const fetchInitialData = async () => {
       try {
@@ -326,14 +333,35 @@ function App() {
 
         if (chatsError) throw chatsError;
 
+        // Only keep chats that belong to this user and are valid
+        const seenPairs = new Set();
+        const myChats = (dbChats || []).filter(chat => {
+          if (chat.type === 'group') return true;
+          const n = chat.name?.toLowerCase() || '';
+          const me = userName.toLowerCase();
+          const parts = n.split('-');
+          // Must have exactly 2 different users, and current user must be one of them
+          if (parts.length !== 2) return false;
+          if (parts[0] === parts[1]) return false; // no self-chats
+          if (!parts.includes(me)) return false;
+          // Deduplicate: keep only the first chat per user pair
+          const pairKey = [...parts].sort().join('-');
+          if (seenPairs.has(pairKey)) return false;
+          seenPairs.add(pairKey);
+          return true;
+        });
+
+        const myChatIds = myChats.map(c => c.id);
+
         const { data: dbMessages, error: msgsError } = await supabase
           .from('messages')
           .select('*')
+          .in('chat_id', myChatIds.length > 0 ? myChatIds : ['__none__'])
           .order('created_at', { ascending: true });
 
         if (msgsError) throw msgsError;
 
-        const chatsWithMessages = (dbChats || []).map(chat => ({
+        const chatsWithMessages = myChats.map(chat => ({
           ...chat,
           messages: (dbMessages || []).filter(msg => msg.chat_id === chat.id),
           unreadCount: 0
@@ -349,7 +377,7 @@ function App() {
     };
 
     fetchInitialData();
-  }, [isLoggedIn]);
+  }, [isLoggedIn, userName]);
 
   // Global user search effect
   useEffect(() => {
@@ -455,8 +483,25 @@ function App() {
         { event: 'INSERT', schema: 'public', table: 'chats' },
         (payload) => {
           const newChat = payload.new;
+          // Only add this chat if the current user is a valid participant
+          const chatName = newChat.name?.toLowerCase() || '';
+          const me = userName.toLowerCase();
+          const parts = chatName.split('-');
+          // Strict: must be exactly 2 different users, current user must be one
+          if (newChat.type !== 'group') {
+            if (parts.length !== 2 || parts[0] === parts[1] || !parts.includes(me)) return;
+          }
+
           setChats(prev => {
             if (prev.some(c => c.id === newChat.id)) return prev;
+            // Also check if a chat already exists for this same user pair
+            const pairKey = [...parts].sort().join('-');
+            const existingPair = prev.find(c => {
+              if (c.type !== 'single') return false;
+              const cp = c.name?.toLowerCase().split('-') || [];
+              return [...cp].sort().join('-') === pairKey;
+            });
+            if (existingPair) return prev;
             return [{ ...newChat, messages: [], unreadCount: 0 }, ...prev];
           });
         }
@@ -546,52 +591,6 @@ function App() {
         return chat;
       }));
     }
-
-    // Mock Contact reply flow (if chat type is single, not group, and not chatting with oneself)
-    if (activeChat && activeChat.type === 'single' && activeChat.name.toLowerCase() !== userName.toLowerCase()) {
-      setTimeout(() => {
-        setTypingChatId(currentChatId);
-      }, 2200);
-
-      setTimeout(async () => {
-        const responses = [
-          'Awesome! Thanks for sharing this.',
-          'Received. Let\'s coordinate on this.',
-          'Looks good. I\'ll check it out in details.',
-          'Can you review my edits too?',
-          'Okay, talk to you later.',
-          'Perfect, let\'s catch up soon.'
-        ];
-        const randomResponse = responses[Math.floor(Math.random() * responses.length)];
-        const responseTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-        const replyMessage = {
-          id: `m_received_${Date.now()}`,
-          chat_id: currentChatId,
-          text: randomResponse,
-          sender: 'received',
-          sender_name: activeChat.name,
-          timestamp: responseTime,
-          status: 'read'
-        };
-
-        try {
-          const { error } = await supabase.from('messages').insert([replyMessage]);
-          if (error) throw error;
-        } catch (e) {
-          setChats(prev => prev.map(chat => {
-            if (chat.id === currentChatId) {
-              return {
-                ...chat,
-                messages: [...chat.messages, replyMessage]
-              };
-            }
-            return chat;
-          }));
-        }
-        setTypingChatId(null);
-      }, 4500);
-    }
   };
 
   const handleSendMessage = () => {
@@ -602,7 +601,7 @@ function App() {
       id: `m_sent_${Date.now()}`,
       text: messageText,
       sender: 'sent',
-      senderName: 'You',
+      senderName: userName,
       timestamp: timeString,
       status: 'sent'
     };
@@ -610,6 +609,74 @@ function App() {
     sendNewMessageObject(newMessage);
     setMessageText('');
     setShowEmojiPicker(false);
+  };
+
+  // Close context menu on any click
+  useEffect(() => {
+    const handleGlobalClick = () => setContextMenu(prev => ({ ...prev, visible: false }));
+    window.addEventListener('click', handleGlobalClick);
+    return () => window.removeEventListener('click', handleGlobalClick);
+  }, []);
+
+  // Handle right-click on a received message
+  const handleMessageContextMenu = (e, msg) => {
+    if (msg.sender !== 'received') return;
+    e.preventDefault();
+    setContextMenu({ visible: true, x: e.clientX, y: e.clientY, message: msg });
+  };
+
+  // Reply with AI using Gemini API
+  const handleReplyWithAI = async () => {
+    const msg = contextMenu.message;
+    if (!msg) return;
+    setContextMenu({ visible: false, x: 0, y: 0, message: null });
+    setIsAiReplying(true);
+    setMessageText('✨ AI is thinking...');
+
+    try {
+      const res = await fetch(
+        'https://corsproxy.io/?' + encodeURIComponent('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=AIzaSyDP9BvMlQb3OIOtAap031xiu9IpWH_6_a4'),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{
+                text: `You are a helpful chat assistant. Someone sent me this message in a chat conversation:\n\n"${msg.text}"\n\nWrite a short, natural, friendly reply I can send back. Keep it under 2 sentences. Only return the reply text, nothing else.`
+              }]
+            }]
+          })
+        }
+      );
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error('Gemini API response error details:', errText);
+        throw new Error(`Gemini API error status: ${res.status}`);
+      }
+
+      const data = await res.json();
+      const aiText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'Thanks for the message!';
+
+      // Type out the reply character by character into the message box
+      setMessageText('');
+      let i = 0;
+      if (aiTypingIntervalRef.current) clearInterval(aiTypingIntervalRef.current);
+      aiTypingIntervalRef.current = setInterval(() => {
+        if (i < aiText.length) {
+          setMessageText(prev => prev + aiText[i]);
+          i++;
+        } else {
+          clearInterval(aiTypingIntervalRef.current);
+          aiTypingIntervalRef.current = null;
+          setIsAiReplying(false);
+        }
+      }, 25);
+    } catch (err) {
+      console.error('Gemini API error:', err);
+      setMessageText('Thanks for the message!');
+      setIsAiReplying(false);
+    }
   };
 
   const handleSendAiMessage = () => {
@@ -644,7 +711,7 @@ function App() {
     let messageObj = {
       id: `m_sent_${Date.now()}`,
       sender: 'sent',
-      senderName: 'You',
+      senderName: userName,
       timestamp: timeString,
       status: 'sent'
     };
@@ -675,7 +742,7 @@ function App() {
         text: `🎤 Voice note (${recordDuration})`,
         mediaType: 'audio',
         sender: 'sent',
-        senderName: 'You',
+        senderName: userName,
         timestamp: timeString,
         status: 'sent'
       };
@@ -1098,11 +1165,15 @@ function App() {
             <div className="date-divider">Today</div>
             
             {displayedMessages.map((msg, index) => {
-              const showSender = activeChat.type === 'group' && msg.sender === 'received';
+              const senderName = (msg.sender_name || msg.senderName || '').trim();
+              const msgDirection = senderName.toLowerCase() === userName.trim().toLowerCase() ? 'sent' : 'received';
+              const showSender = activeChat.type === 'group' && msgDirection === 'received';
               return (
-                <div key={msg.id || index} className={`message-bubble-wrapper ${msg.sender}`}>
-                  <div className={`message-bubble ${msg.sender}`}>
-                    {showSender && <span className="message-sender">{msg.senderName}</span>}
+                <div key={msg.id || index} className={`message-bubble-wrapper ${msgDirection}`}
+                  onContextMenu={(e) => handleMessageContextMenu(e, { ...msg, sender: msgDirection })}
+                >
+                  <div className={`message-bubble ${msgDirection}`}>
+                    {showSender && <span className="message-sender">{senderName}</span>}
                     
                     {/* Check if Media snippet */}
                     {msg.mediaType === 'photo' ? (
@@ -1145,7 +1216,7 @@ function App() {
 
                     <div className="message-footer">
                       <span className="message-time">{msg.timestamp}</span>
-                      {msg.sender === 'sent' && (
+                      {msgDirection === 'sent' && (
                         <span className="message-status">
                           {msg.status === 'sent' && <Check size={14} style={{ color: 'var(--wa-text-secondary)' }} />}
                           {msg.status === 'delivered' && <CheckCheck size={14} style={{ color: 'var(--wa-text-secondary)' }} />}
@@ -1157,6 +1228,27 @@ function App() {
                 </div>
               );
             })}
+
+            {/* Right-click Context Menu */}
+            {contextMenu.visible && (
+              <div 
+                className="msg-context-menu"
+                style={{ top: contextMenu.y, left: contextMenu.x }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button className="context-menu-item" onClick={handleReplyWithAI}>
+                  <Sparkles size={15} style={{ color: '#f1c40f' }} />
+                  <span>Reply with AI</span>
+                </button>
+                <button className="context-menu-item" onClick={() => {
+                  if (contextMenu.message) setMessageText(contextMenu.message.text);
+                  setContextMenu({ visible: false, x: 0, y: 0, message: null });
+                }}>
+                  <MessageSquare size={15} />
+                  <span>Quote Reply</span>
+                </button>
+              </div>
+            )}
 
             {typingChatId === activeChat.id && (
               <div className="message-bubble-wrapper received">
@@ -1229,7 +1321,7 @@ function App() {
                     id: `m_sent_${Date.now()}`,
                     text: suggestion,
                     sender: 'sent',
-                    senderName: 'You',
+                    senderName: userName,
                     timestamp: timeString,
                     status: 'sent'
                   });
@@ -1296,16 +1388,23 @@ function App() {
                 <span>Recording Voice Note: {Math.floor(recordingSeconds / 60)}:{(recordingSeconds % 60).toString().padStart(2, '0')}</span>
               </div>
             ) : (
-              <div className="chat-input-wrapper">
+              <div className="chat-input-wrapper" style={{ position: 'relative' }}>
+                {isAiReplying && (
+                  <div className="ai-typing-indicator">
+                    <Sparkles size={13} className="ai-sparkle-spin" />
+                    <span>AI composing reply...</span>
+                  </div>
+                )}
                 <input 
                   type="text"
-                  className="chat-text-input"
+                  className={`chat-text-input ${isAiReplying ? 'ai-typing-active' : ''}`}
                   placeholder="Type a message"
                   value={messageText}
-                  onChange={(e) => setMessageText(e.target.value)}
+                  onChange={(e) => { if (!isAiReplying) setMessageText(e.target.value); }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSendMessage();
+                    if (e.key === 'Enter' && !isAiReplying) handleSendMessage();
                   }}
+                  readOnly={isAiReplying}
                 />
               </div>
             )}
