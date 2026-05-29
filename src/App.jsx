@@ -617,7 +617,6 @@ function App() {
     window.addEventListener('click', handleGlobalClick);
     return () => window.removeEventListener('click', handleGlobalClick);
   }, []);
-
   // Handle right-click on a received message
   const handleMessageContextMenu = (e, msg) => {
     if (msg.sender !== 'received') return;
@@ -625,7 +624,7 @@ function App() {
     setContextMenu({ visible: true, x: e.clientX, y: e.clientY, message: msg });
   };
 
-  // Reply with AI using Gemini API
+  // Reply with AI using Gemini API (with OpenRouter fallback)
   const handleReplyWithAI = async () => {
     const msg = contextMenu.message;
     if (!msg) return;
@@ -633,9 +632,11 @@ function App() {
     setIsAiReplying(true);
     setMessageText('✨ AI is thinking...');
 
+    let aiText = '';
     try {
+      // 1. Try Gemini API
       const res = await fetch(
-        'https://corsproxy.io/?' + encodeURIComponent('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=AIzaSyDP9BvMlQb3OIOtAap031xiu9IpWH_6_a4'),
+        'https://corsproxy.io/?' + encodeURIComponent(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`),
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -649,34 +650,107 @@ function App() {
         }
       );
 
-      if (!res.ok) {
-        const errText = await res.text();
-        console.error('Gemini API response error details:', errText);
-        throw new Error(`Gemini API error status: ${res.status}`);
+      if (res.ok) {
+        const data = await res.json();
+        aiText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+      } else {
+        throw new Error('Gemini API failed');
       }
+    } catch (geminiErr) {
+      console.log('Gemini API failed, falling back to Nvidia NIM...', geminiErr);
+      try {
+        // 2. Try Nvidia fallback (wrapped in CORS proxy)
+        const nvRes = await fetch(
+          'https://corsproxy.io/?' + encodeURIComponent('https://integrate.api.nvidia.com/v1/chat/completions'),
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${import.meta.env.VITE_NVIDIA_API_KEY}`
+            },
+            body: JSON.stringify({
+              model: 'meta/llama-3.1-8b-instruct',
+              max_tokens: 150,
+              messages: [{
+                role: 'user',
+                content: `You are a helpful chat assistant. Someone sent me this message in a chat conversation:\n\n"${msg.text}"\n\nWrite a short, natural, friendly reply I can send back. Keep it under 2 sentences. Only return the reply text, nothing else.`
+              }]
+            })
+          }
+        );
 
-      const data = await res.json();
-      const aiText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'Thanks for the message!';
-
-      // Type out the reply character by character into the message box
-      setMessageText('');
-      let i = 0;
-      if (aiTypingIntervalRef.current) clearInterval(aiTypingIntervalRef.current);
-      aiTypingIntervalRef.current = setInterval(() => {
-        if (i < aiText.length) {
-          setMessageText(prev => prev + aiText[i]);
-          i++;
+        if (nvRes.ok) {
+          const nvData = await nvRes.json();
+          aiText = nvData?.choices?.[0]?.message?.content?.trim() || '';
         } else {
-          clearInterval(aiTypingIntervalRef.current);
-          aiTypingIntervalRef.current = null;
-          setIsAiReplying(false);
+          const errText = await nvRes.text();
+          throw new Error(`Nvidia failed: ${errText}`);
         }
-      }, 25);
-    } catch (err) {
-      console.error('Gemini API error:', err);
-      setMessageText('Thanks for the message!');
-      setIsAiReplying(false);
+      } catch (nvErr) {
+        console.log('Nvidia API failed, falling back to OpenRouter...', nvErr);
+        try {
+          // 3. Try OpenRouter fallback
+          const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${import.meta.env.VITE_OPENROUTER_API_KEY}`,
+              'HTTP-Referer': window.location.origin,
+              'X-Title': 'Chat App'
+            },
+            body: JSON.stringify({
+              model: 'meta-llama/llama-3.3-70b-instruct:free',
+              max_tokens: 150,
+              messages: [{
+                role: 'user',
+                content: `You are a helpful chat assistant. Someone sent me this message in a chat conversation:\n\n"${msg.text}"\n\nWrite a short, natural, friendly reply I can send back. Keep it under 2 sentences. Only return the reply text, nothing else.`
+              }]
+            })
+          });
+
+          if (orRes.ok) {
+            const orData = await orRes.json();
+            aiText = orData?.choices?.[0]?.message?.content?.trim() || '';
+          } else {
+            const errText = await orRes.text();
+            
+            // List OpenRouter models to see what's available
+            try {
+              const listRes = await fetch('https://openrouter.ai/api/v1/models');
+              if (listRes.ok) {
+                const listData = await listRes.json();
+                const freeModels = listData.data?.filter(m => m.id.endsWith(':free')).map(m => m.id);
+                console.log('Available free models on OpenRouter:', freeModels);
+              }
+            } catch (listErr) {
+              console.error('Failed to list OpenRouter models:', listErr);
+            }
+
+            throw new Error(`OpenRouter failed: ${errText}`);
+          }
+        } catch (orErr) {
+          console.error('All AI APIs failed:', orErr);
+          aiText = 'Thanks for the message!';
+        }
+      }
     }
+
+    if (!aiText) aiText = 'Thanks for the message!';
+
+    // Type out the reply character by character into the message box cleanly
+    setMessageText('');
+    let currentLength = 1;
+    if (aiTypingIntervalRef.current) clearInterval(aiTypingIntervalRef.current);
+    aiTypingIntervalRef.current = setInterval(() => {
+      if (currentLength <= aiText.length) {
+        setMessageText(aiText.slice(0, currentLength));
+        currentLength++;
+      } else {
+        clearInterval(aiTypingIntervalRef.current);
+        aiTypingIntervalRef.current = null;
+        setIsAiReplying(false);
+      }
+    }, 25);
   };
 
   const handleSendAiMessage = () => {
