@@ -661,7 +661,7 @@ function App() {
       try {
         // 2. Try Nvidia fallback (wrapped in CORS proxy)
         const nvRes = await fetch(
-          'https://corsproxy.io/?' + encodeURIComponent('https://integrate.api.nvidia.com/v1/chat/completions'),
+          'https://integrate.api.nvidia.com/v1/chat/completions',
           {
             method: 'POST',
             headers: {
