@@ -755,29 +755,106 @@ function App() {
     }, 25);
   };
 
-  const handleSendAiMessage = () => {
+  const handleSendAiMessage = async () => {
     if (!aiInput.trim()) return;
-    
-    const userMsg = { id: Date.now(), text: aiInput, sender: "user" };
+
+    const userText = aiInput;
+    const userMsg = { id: Date.now(), text: userText, sender: "user" };
     setAiMessages(prev => [...prev, userMsg]);
-    const currentInput = aiInput;
     setAiInput("");
 
-    setTimeout(() => {
-      let aiReplyText = "I'm here to assist! You can ask me about scheduling tasks, formatting dates, or other scheduler features.";
-      const text = currentInput.toLowerCase();
-      if (text.includes("hello") || text.includes("hi")) {
-        aiReplyText = "Hello! How can I help you today?";
-      } else if (text.includes("help")) {
-        aiReplyText = "I can help with creating new group chats, clearing messages, or navigating the scheduler dashboard!";
-      } else if (text.includes("theme") || text.includes("dark") || text.includes("light")) {
-        aiReplyText = "Use the Sun/Moon toggle at the top left of the sidebar to change the theme theme!";
-      } else if (text.includes("clear") || text.includes("delete")) {
-        aiReplyText = "You can clear chat history or delete chats via the dropdown menu in the active chat header.";
-      }
+    // Add a typing placeholder in the AI sidebar messages
+    const assistantPlaceholderId = Date.now() + 1;
+    setAiMessages(prev => [...prev, { id: assistantPlaceholderId, text: "thinking...", sender: "ai" }]);
 
-      setAiMessages(prev => [...prev, { id: Date.now() + 1, text: aiReplyText, sender: "ai" }]);
-    }, 1000);
+    // Grab the active chat context (last 15 messages for sliding context window)
+    const chatContext = activeChat 
+      ? activeChat.messages.slice(-15).map(m => `${m.sender_name || m.senderName || 'Member'}: ${m.text}`).join('\n')
+      : 'No active chat';
+
+    // System prompt explaining the assistant role and active chat context
+    const systemPrompt = `You are a helpful chat assistant. You are helping the current user (${userName}) navigate their chat applications and tasks.
+Here is the context of the active chat conversation they are viewing:
+---
+${chatContext}
+---
+Please assist the user with their request. Keep replies short, natural, and helpful.`;
+
+    let aiReplyText = '';
+    try {
+      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      const nvBaseUrl = isLocal ? 'https://integrate.api.nvidia.com' : '/api/nvidia';
+      
+      const nvRes = await fetch(
+        `${nvBaseUrl}/v1/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_NVIDIA_API_KEY}`
+          },
+          body: JSON.stringify({
+            model: 'meta/llama-3.1-8b-instruct',
+            max_tokens: 250,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              ...aiMessages.filter(m => m.text !== 'thinking...').map(m => ({
+                role: m.sender === 'user' ? 'user' : 'assistant',
+                content: m.text
+              })),
+              { role: 'user', content: userText }
+            ]
+          })
+        }
+      );
+
+      if (nvRes.ok) {
+        const nvData = await nvRes.json();
+        aiReplyText = nvData?.choices?.[0]?.message?.content?.trim() || '';
+      } else {
+        throw new Error('Nvidia API failed');
+      }
+    } catch (err) {
+      console.log('Nvidia API failed for AI Assistant, falling back to OpenRouter...', err);
+      try {
+        const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_OPENROUTER_API_KEY}`,
+            'HTTP-Referer': window.location.origin,
+            'X-Title': 'Chat App'
+          },
+          body: JSON.stringify({
+            model: 'meta-llama/llama-3.2-3b-instruct:free',
+            max_tokens: 250,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              ...aiMessages.filter(m => m.text !== 'thinking...').map(m => ({
+                role: m.sender === 'user' ? 'user' : 'assistant',
+                content: m.text
+              })),
+              { role: 'user', content: userText }
+            ]
+          })
+        });
+
+        if (orRes.ok) {
+          const orData = await orRes.json();
+          aiReplyText = orData?.choices?.[0]?.message?.content?.trim() || '';
+        } else {
+          throw new Error('OpenRouter fallback failed');
+        }
+      } catch (orErr) {
+        console.error('All AI endpoints failed for helper:', orErr);
+        aiReplyText = "I'm having trouble connecting to my brain right now. Please try again in a moment!";
+      }
+    }
+
+    if (!aiReplyText) aiReplyText = "I'm having trouble connecting to my brain right now. Please try again in a moment!";
+
+    // Replace the placeholder with the actual reply
+    setAiMessages(prev => prev.map(m => m.id === assistantPlaceholderId ? { ...m, text: aiReplyText } : m));
   };
 
   // Mock Attachment sends
