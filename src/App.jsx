@@ -773,12 +773,12 @@ function App() {
       : 'No active chat';
 
     // System prompt explaining the assistant role and active chat context
-    const systemPrompt = `You are a helpful chat assistant. You are helping the current user (${userName}) navigate their chat applications and tasks.
-Here is the context of the active chat conversation they are viewing:
+    const systemPrompt = `You are the chat assistant built into this application. You have direct database read access to the active chat history.
+The active chat history is provided below for your reference. Do not say you do not have access to the history, because it is given to you right here:
 ---
 ${chatContext}
 ---
-Please assist the user with their request. Keep replies short, natural, and helpful.`;
+Use this context to directly answer the user's questions or help them formulate replies. Keep replies short, natural, and helpful.`;
 
     let aiReplyText = '';
     try {
