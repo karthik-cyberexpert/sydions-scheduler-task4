@@ -773,12 +773,12 @@ function App() {
       : 'No active chat';
 
     // System prompt explaining the assistant role and active chat context
-    const systemPrompt = `You are the chat assistant built into this application. You have direct database read access to the active chat history.
-The active chat history is provided below for your reference. Do not say you do not have access to the history, because it is given to you right here:
+    const systemPrompt = `You are the chat assistant built into this application. You have access to the active chat history.
+The active chat history is provided below for your reference:
 ---
 ${chatContext}
 ---
-Use this context to directly answer the user's questions or help them formulate replies. Keep replies short, natural, and helpful.`;
+Use this context to draft a natural, conversational reply to the last message. Do not describe the metadata or timing (e.g. do not say "The message was sent at..."). Just write the direct message reply text. Keep it under 2 sentences, friendly and direct.`;
 
     let aiReplyText = '';
     try {
