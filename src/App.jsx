@@ -769,7 +769,7 @@ function App() {
 
     // Grab the active chat context (last 15 messages for sliding context window)
     const chatContext = activeChat 
-      ? activeChat.messages.slice(-15).map(m => `${m.sender_name || m.senderName || 'Member'}: ${m.text}`).join('\n')
+      ? activeChat.messages.slice(-15).map(m => `[${m.timestamp || ''}] ${m.sender_name || m.senderName || 'Member'}: ${m.text}`).join('\n')
       : 'No active chat';
 
     // System prompt explaining the assistant role and active chat context
