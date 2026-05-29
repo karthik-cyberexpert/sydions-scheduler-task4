@@ -1503,3 +1503,12 @@ body {
   0%, 100% { box-shadow: 0 0 0 2px rgba(0, 168, 132, 0.15), 0 0 8px rgba(0, 168, 132, 0.08); }
   50% { box-shadow: 0 0 0 3px rgba(0, 168, 132, 0.25), 0 0 16px rgba(0, 168, 132, 0.15); }
 }
+
+.spin-anim {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

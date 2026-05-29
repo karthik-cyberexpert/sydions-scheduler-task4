@@ -58,6 +58,7 @@ function App() {
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const [chats, setChats] = useState(INITIAL_CHATS);
   const [activeChatId, setActiveChatId] = useState('c1');
@@ -320,62 +321,64 @@ function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chats, activeChatId, typingChatId]);
 
+  const fetchInitialData = async () => {
+    if (!isLoggedIn || !userName) return;
+    setIsRefreshing(true);
+    try {
+      const { data: dbChats, error: chatsError } = await supabase
+        .from('chats')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (chatsError) throw chatsError;
+
+      // Only keep chats that belong to this user and are valid
+      const seenPairs = new Set();
+      const myChats = (dbChats || []).filter(chat => {
+        if (chat.type === 'group') return true;
+        const n = chat.name?.toLowerCase() || '';
+        const me = userName.toLowerCase();
+        const parts = n.split('-');
+        // Must have exactly 2 different users, and current user must be one of them
+        if (parts.length !== 2) return false;
+        if (parts[0] === parts[1]) return false; // no self-chats
+        if (!parts.includes(me)) return false;
+        // Deduplicate: keep only the first chat per user pair
+        const pairKey = [...parts].sort().join('-');
+        if (seenPairs.has(pairKey)) return false;
+        seenPairs.add(pairKey);
+        return true;
+      });
+
+      const myChatIds = myChats.map(c => c.id);
+
+      const { data: dbMessages, error: msgsError } = await supabase
+        .from('messages')
+        .select('*')
+        .in('chat_id', myChatIds.length > 0 ? myChatIds : ['__none__'])
+        .order('created_at', { ascending: true });
+
+      if (msgsError) throw msgsError;
+
+      const chatsWithMessages = myChats.map(chat => ({
+        ...chat,
+        messages: (dbMessages || []).filter(msg => msg.chat_id === chat.id),
+        unreadCount: 0
+      }));
+
+      setChats(chatsWithMessages);
+      if (chatsWithMessages.length > 0 && !activeChatId) {
+        setActiveChatId(chatsWithMessages[0].id);
+      }
+    } catch (err) {
+      console.error("Error loading data from Supabase:", err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   // Fetch initial chats and messages from Supabase (filtered by current user)
   useEffect(() => {
-    if (!isLoggedIn || !userName) return;
-
-    const fetchInitialData = async () => {
-      try {
-        const { data: dbChats, error: chatsError } = await supabase
-          .from('chats')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (chatsError) throw chatsError;
-
-        // Only keep chats that belong to this user and are valid
-        const seenPairs = new Set();
-        const myChats = (dbChats || []).filter(chat => {
-          if (chat.type === 'group') return true;
-          const n = chat.name?.toLowerCase() || '';
-          const me = userName.toLowerCase();
-          const parts = n.split('-');
-          // Must have exactly 2 different users, and current user must be one of them
-          if (parts.length !== 2) return false;
-          if (parts[0] === parts[1]) return false; // no self-chats
-          if (!parts.includes(me)) return false;
-          // Deduplicate: keep only the first chat per user pair
-          const pairKey = [...parts].sort().join('-');
-          if (seenPairs.has(pairKey)) return false;
-          seenPairs.add(pairKey);
-          return true;
-        });
-
-        const myChatIds = myChats.map(c => c.id);
-
-        const { data: dbMessages, error: msgsError } = await supabase
-          .from('messages')
-          .select('*')
-          .in('chat_id', myChatIds.length > 0 ? myChatIds : ['__none__'])
-          .order('created_at', { ascending: true });
-
-        if (msgsError) throw msgsError;
-
-        const chatsWithMessages = myChats.map(chat => ({
-          ...chat,
-          messages: (dbMessages || []).filter(msg => msg.chat_id === chat.id),
-          unreadCount: 0
-        }));
-
-        setChats(chatsWithMessages);
-        if (chatsWithMessages.length > 0 && !activeChatId) {
-          setActiveChatId(chatsWithMessages[0].id);
-        }
-      } catch (err) {
-        console.error("Error loading data from Supabase:", err);
-      }
-    };
-
     fetchInitialData();
   }, [isLoggedIn, userName]);
 
@@ -1127,6 +1130,9 @@ Use this context to draft a natural, conversational reply to the last message. D
             <span style={{ fontSize: '14.5px', fontWeight: '500' }}>{userName}</span>
           </div>
           <div className="sidebar-actions">
+            <button className="icon-btn" onClick={fetchInitialData} title="Refresh Data" disabled={isRefreshing}>
+              <RotateCw size={20} className={isRefreshing ? 'spin-anim' : ''} />
+            </button>
             <button className="icon-btn" onClick={() => setIsDarkTheme(!isDarkTheme)} title="Toggle Theme">
               {isDarkTheme ? <Sun size={20} /> : <Moon size={20} />}
             </button>
