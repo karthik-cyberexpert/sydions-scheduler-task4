@@ -378,11 +378,14 @@ function App() {
   }, [searchText, isLoggedIn, userName]);
 
   const handleSelectSearchResult = async (resultUser) => {
-    const existingChat = chats.find(c => 
-      c.type === 'single' && 
-      c.name.toLowerCase().includes(userName.toLowerCase()) && 
-      c.name.toLowerCase().includes(resultUser.username.toLowerCase())
-    );
+    // Check both name orderings to find existing chat
+    const existingChat = chats.find(c => {
+      if (c.type !== 'single') return false;
+      const n = c.name.toLowerCase();
+      const me = userName.toLowerCase();
+      const them = resultUser.username.toLowerCase();
+      return (n === `${me}-${them}` || n === `${them}-${me}`);
+    });
 
     if (existingChat) {
       handleSelectChat(existingChat.id);
@@ -398,25 +401,30 @@ function App() {
       type: 'single'
     };
 
+    // Add to local state FIRST so UI updates immediately and prevents duplicate clicks
+    const fullChatObj = {
+      ...newChatObj,
+      avatarColor: newChatObj.avatar_color,
+      unreadCount: 0,
+      messages: []
+    };
+    setChats(prev => {
+      if (prev.some(c => c.id === newChatId)) return prev;
+      return [fullChatObj, ...prev];
+    });
+    setActiveChatId(newChatId);
+    setSearchText('');
+
+    // Then persist to Supabase in background
     try {
       const { error: chatError } = await supabase
         .from('chats')
         .insert([newChatObj]);
 
       if (chatError) throw chatError;
-
-      setActiveChatId(newChatId);
     } catch (e) {
-      const fullChatObj = {
-        ...newChatObj,
-        avatarColor: newChatObj.avatar_color,
-        unreadCount: 0,
-        messages: []
-      };
-      setChats(prev => [fullChatObj, ...prev]);
-      setActiveChatId(newChatId);
+      console.error('Error creating chat in DB:', e);
     }
-    setSearchText('');
   };
 
   // Connect to Supabase Realtime channel (database changes)
